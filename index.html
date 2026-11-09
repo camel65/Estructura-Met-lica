@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Estructura Metálica & Colapso</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #000000;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            cursor: default;
+        }
+
+        /* Botón de Inicio Centrado */
+        #btn-inicio {
+            padding: 18px 45px;
+            font-size: 1.6rem;
+            color: #ffffff;
+            background: transparent;
+            border: 2px solid #ffaa00;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 0 25px rgba(255, 170, 0, 0.4);
+            z-index: 10;
+        }
+
+        #btn-inicio:hover {
+            background-color: #ffaa00;
+            color: #000000;
+            box-shadow: 0 0 35px rgba(255, 170, 0, 0.9);
+            transform: scale(1.08);
+        }
+
+        /* Controles Flotantes Superior Derecha */
+        .controles {
+            display: none;
+            position: fixed;
+            top: 25px;
+            right: 25px;
+            gap: 12px;
+            z-index: 20;
+        }
+
+        .btn-control {
+            padding: 10px 22px;
+            font-size: 0.95rem;
+            color: #ffffff;
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid rgba(255, 170, 0, 0.5);
+            border-radius: 30px;
+            backdrop-filter: blur(5px);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-control:hover {
+            background: #ffaa00;
+            color: #000000;
+            transform: scale(1.05);
+            box-shadow: 0 0 15px rgba(255, 170, 0, 0.6);
+        }
+
+        #btn-salir:hover {
+            background: rgba(255, 0, 85, 0.9);
+            border-color: #ff0055;
+            color: #ffffff;
+            box-shadow: 0 0 15px rgba(255, 0, 85, 0.8);
+        }
+
+        /* Contenedor del Lienzo */
+        #canvas-container {
+            display: none;
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- CAMBIA AQUÍ LA RUTA A TU ARCHIVO DE AUDIO -->
+    <audio id="miMusica" src="musica39.mp3" preload="auto" loop></audio>
+
+    <!-- Botón de Inicio -->
+    <button id="btn-inicio">Inicio</button>
+
+    <!-- Controles flotantes -->
+    <div class="controles" id="panel-controles">
+        <button class="btn-control" id="btn-audio">🔊 Sonido: ON</button>
+        <button class="btn-control" id="btn-salir">Salir</button>
+    </div>
+
+    <!-- Contenedor del lienzo -->
+    <div id="canvas-container">
+        <canvas id="steelCanvas"></canvas>
+    </div>
+
+    <script>
+        const btnInicio = document.getElementById('btn-inicio');
+        const btnSalir = document.getElementById('btn-salir');
+        const btnAudio = document.getElementById('btn-audio');
+        const panelControles = document.getElementById('panel-controles');
+        const canvasContainer = document.getElementById('canvas-container');
+        const canvas = document.getElementById('steelCanvas');
+        const ctx = canvas.getContext('2d');
+        const audioElement = document.getElementById('miMusica');
+
+        let animacionId = null;
+        let activo = false;
+
+        // Configuración de la red reticular
+        const GRID_SIZE = 80;
+        const GROSOR_VIGA = 14;
+
+        // ESTADOS: 'CONSTRUYENDO', 'PAUSA_COMPLETA', 'TEMBLOR_COLAPSO', 'PAUSA_LIMPIA'
+        let estado = 'CONSTRUYENDO';
+        let tiempoEstadoInicio = 0;
+
+        let vigasTotales = [];
+        let vigasConstruidas = [];
+        let indiceVigaActual = 0;
+        let progresoVigaActual = 0;
+        let velocidadConstruccion = 0.04;
+
+        let chispasSoldadura = [];
+        let vigasDerrumbadas = [];
+
+        function ajustarCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+
+        window.addEventListener('resize', () => {
+            if (activo) {
+                ajustarCanvas();
+                reiniciarBucle();
+            }
+        });
+
+        btnAudio.addEventListener('click', (e) => {
+            e.stopPropagation();
+            audioElement.muted = !audioElement.muted;
+            btnAudio.textContent = audioElement.muted ? "🔇 Sonido: OFF" : "🔊 Sonido: ON";
+        });
+
+        btnInicio.addEventListener('click', () => {
+            btnInicio.style.display = 'none';
+            panelControles.style.display = 'flex';
+            canvasContainer.style.display = 'block';
+
+            ajustarCanvas();
+            reiniciarBucle();
+            activo = true;
+
+            audioElement.currentTime = 0;
+            audioElement.muted = false;
+            btnAudio.textContent = "🔊 Sonido: ON";
+            audioElement.play().catch(err => console.log(err));
+
+            iniciarAnimacion();
+        });
+
+        btnSalir.addEventListener('click', (e) => {
+            e.stopPropagation();
+            activo = false;
+            if (animacionId) cancelAnimationFrame(animacionId);
+
+            audioElement.pause();
+            audioElement.currentTime = 0;
+
+            canvasContainer.style.display = 'none';
+            panelControles.style.display = 'none';
+            btnInicio.style.display = 'block';
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        });
+
+        function generarListaVigas() {
+            vigasTotales = [];
+            const cols = Math.ceil(canvas.width / GRID_SIZE) + 1;
+            const filas = Math.ceil(canvas.height / GRID_SIZE) + 1;
+
+            // Vigas horizontales de abajo hacia arriba
+            for (let f = filas; f >= 0; f--) {
+                const y = f * GRID_SIZE;
+                for (let c = 0; c < cols; c++) {
+                    const x1 = c * GRID_SIZE;
+                    const x2 = (c + 1) * GRID_SIZE;
+                    vigasTotales.push({ x1, y1: y, x2, y2: y, tipo: 'H' });
+                }
+            }
+
+            // Vigas verticales de abajo hacia arriba
+            for (let c = 0; c <= cols; c++) {
+                const x = c * GRID_SIZE;
+                for (let f = filas; f > 0; f--) {
+                    const y1 = f * GRID_SIZE;
+                    const y2 = (f - 1) * GRID_SIZE;
+                    vigasTotales.push({ x1: x, y1, x2: x, y2, tipo: 'V' });
+                }
+            }
+
+            // Mezclar para una construcción realista entrelazada
+            vigasTotales.sort(() => Math.random() - 0.5);
+        }
+
+        function reiniciarBucle() {
+            generarListaVigas();
+            estado = 'CONSTRUYENDO';
+            tiempoEstadoInicio = Date.now();
+            vigasConstruidas = [];
+            indiceVigaActual = 0;
+            progresoVigaActual = 0;
+            velocidadConstruccion = 0.03;
+            chispasSoldadura = [];
+            vigasDerrumbadas = [];
+        }
+
+        function agregarChispas(x, y) {
+            for (let i = 0; i < 8; i++) {
+                const ang = Math.random() * Math.PI * 2;
+                const vel = 1 + Math.random() * 4;
+                chispasSoldadura.push({
+                    x, y,
+                    vx: Math.cos(ang) * vel,
+                    vy: Math.sin(ang) * vel + 1, // Caída por gravedad
+                    vida: 1.0
+                });
+            }
+        }
+
+        function prepararDerrumbeLento() {
+            vigasDerrumbadas = vigasConstruidas.map(v => {
+                const cx = (v.x1 + v.x2) / 2;
+                const cy = (v.y1 + v.y2) / 2;
+                return {
+                    ...v,
+                    cx, cy,
+                    vx: (Math.random() - 0.5) * 1.8,
+                    vy: Math.random() * 0.5,
+                    rot: 0,
+                    vRot: (Math.random() - 0.5) * 0.02,
+                    retraso: Math.random() * 120 // Desmoronamiento escalonado
+                };
+            });
+        }
+
+        function iniciarAnimacion() {
+            if (!activo) return;
+
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const ahora = Date.now();
+            const tSeg = (ahora - tiempoEstadoInicio) * 0.001;
+
+            ctx.save();
+
+            // LÓGICA DE ESTADOS
+            if (estado === 'CONSTRUYENDO') {
+                // Aumentar progresivamente la velocidad de montaje
+                velocidadConstruccion += 0.0008;
+                progresoVigaActual += velocidadConstruccion;
+
+                if (progresoVigaActual >= 1.0) {
+                    const vCompletada = vigasTotales[indiceVigaActual];
+                    vigasConstruidas.push(vCompletada);
+                    agregarChispas(vCompletada.x2, vCompletada.y2);
+
+                    indiceVigaActual++;
+                    progresoVigaActual = 0;
+
+                    if (indiceVigaActual >= vigasTotales.length) {
+                        estado = 'PAUSA_COMPLETA';
+                        tiempoEstadoInicio = ahora;
+                    }
+                }
+            }
+            else if (estado === 'PAUSA_COMPLETA') {
+                // Esperar 4 segundos llena de vigas
+                if (tSeg >= 4.0) {
+                    estado = 'TEMBLOR_COLAPSO';
+                    tiempoEstadoInicio = ahora;
+                    prepararDerrumbeLento();
+                }
+            }
+            else if (estado === 'TEMBLOR_COLAPSO') {
+                // Efecto de temblor en pantalla
+                const intensidadTemblor = Math.min(15, tSeg * 3);
+                const shiftX = (Math.random() - 0.5) * intensidadTemblor;
+                const shiftY = (Math.random() - 0.5) * intensidadTemblor;
+                ctx.translate(shiftX, shiftY);
+
+                let algunaEnPantalla = false;
+
+                // Físicas de derrumbe pausado
+                vigasDerrumbadas.forEach(v => {
+                    if (v.retraso > 0) {
+                        v.retraso--;
+                    } else {
+                        v.vy += 0.08; // Gravedad suave para caída lenta
+                        v.cx += v.vx;
+                        v.cy += v.vy;
+                        v.rot += v.vRot;
+                    }
+
+                    if (v.cy < canvas.height + 150) algunaEnPantalla = true;
+                });
+
+                if (!algunaEnPantalla || tSeg > 9.0) {
+                    estado = 'PAUSA_LIMPIA';
+                    tiempoEstadoInicio = ahora;
+                }
+            }
+            else if (estado === 'PAUSA_LIMPIA') {
+                // Esperar 3 segundos limpia antes de reiniciar
+                if (tSeg >= 3.0) {
+                    reiniciarBucle();
+                }
+            }
+
+            // DIBUJAR VIGAS METALICAS (Estados CONSTRUYENDO y PAUSA_COMPLETA)
+            if (estado === 'CONSTRUYENDO' || estado === 'PAUSA_COMPLETA') {
+                // Vigas terminadas
+                vigasConstruidas.forEach(v => dibujarVigaMetalica(v.x1, v.y1, v.x2, v.y2, 1.0));
+
+                // Viga en proceso de montaje
+                if (estado === 'CONSTRUYENDO' && indiceVigaActual < vigasTotales.length) {
+                    const v = vigasTotales[indiceVigaActual];
+                    dibujarVigaMetalica(v.x1, v.y1, v.x2, v.y2, progresoVigaActual);
+
+                    const currX = v.x1 + (v.x2 - v.x1) * progresoVigaActual;
+                    const currY = v.y1 + (v.y2 - v.y1) * progresoVigaActual;
+                    agregarChispas(currX, currY);
+                }
+            }
+
+            // DIBUJAR VIGAS EN DERRUMBE
+            if (estado === 'TEMBLOR_COLAPSO') {
+                vigasDerrumbadas.forEach(v => {
+                    ctx.save();
+                    ctx.translate(v.cx, v.cy);
+                    ctx.rotate(v.rot);
+                    const halfL = Math.hypot(v.x2 - v.x1, v.y2 - v.y1) / 2;
+                    dibujarVigaMetalica(-halfL, 0, halfL, 0, 1.0);
+                    ctx.restore();
+                });
+            }
+
+            // RENDERIZAR CHISPAS DE SOLDADURA LUMINOSAS
+            ctx.save();
+            for (let i = chispasSoldadura.length - 1; i >= 0; i--) {
+                const c = chispasSoldadura[i];
+                c.x += c.vx;
+                c.y += c.vy;
+                c.vida -= 0.04;
+
+                if (c.vida <= 0) {
+                    chispasSoldadura.splice(i, 1);
+                    continue;
+                }
+
+                ctx.globalAlpha = c.vida;
+                ctx.fillStyle = (Math.random() > 0.3) ? '#ffcc00' : '#ffffff';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#ffaa00';
+                ctx.beginPath();
+                ctx.arc(c.x, c.y, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+
+            ctx.restore();
+
+            animacionId = requestAnimationFrame(iniciarAnimacion);
+        }
+
+        function dibujarVigaMetalica(x1, y1, x2, y2, progreso) {
+            const px2 = x1 + (x2 - x1) * progreso;
+            const py2 = y1 + (y2 - y1) * progreso;
+
+            ctx.save();
+            
+            // Sombra proyectada
+            ctx.shadowBlur = 12;
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+
+            // Gradiente metálico cromado
+            const grad = ctx.createLinearGradient(x1, y1, x2, y2);
+            grad.addColorStop(0, '#505860');
+            grad.addColorStop(0.5, '#b8c0c8');
+            grad.addColorStop(1, '#30363d');
+
+            ctx.strokeStyle = grad;
+            ctx.lineWidth = GROSOR_VIGA;
+            ctx.lineCap = 'butt';
+
+            // Cuerpo principal de la viga
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(px2, py2);
+            ctx.stroke();
+
+            // Bordes de refuerzo perfil en I (Neón Naranja / Industrial)
+            ctx.strokeStyle = '#ffaa00';
+            ctx.lineWidth = 1.8;
+            ctx.shadowBlur = 6;
+            ctx.shadowColor = '#ffaa00';
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(px2, py2);
+            ctx.stroke();
+
+            // Remaches metálicos en los extremos si está completada
+            if (progreso >= 0.95) {
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowBlur = 5;
+                ctx.shadowColor = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(x1, y1, 2.5, 0, Math.PI * 2);
+                ctx.arc(px2, py2, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+    </script>
+</body>
+</html>
